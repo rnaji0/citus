@@ -170,6 +170,9 @@ extern List * CitusTableList(void);
 extern ShardInterval * LoadShardInterval(uint64 shardId);
 extern bool ShardExists(uint64 shardId);
 extern Oid RelationIdForShard(uint64 shardId);
+extern bool LookupShardPosition(uint64 shardId, Oid *relationId,
+								uint32 *colocationId, int *shardIndex,
+								bool *isHashDistributed);
 extern bool ReferenceTableShardId(uint64 shardId);
 extern bool DistributedTableShardId(uint64 shardId);
 extern ShardPlacement * ShardPlacementOnGroupIncludingOrphanedPlacements(int32 groupId,

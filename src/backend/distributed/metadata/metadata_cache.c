@@ -1029,6 +1029,35 @@ ShardExists(uint64 shardId)
 
 
 /*
+ * LookupShardPosition finds where a shard sits in the metadata cache: the
+ * distributed table it belongs to, the table's colocation group, its index
+ * among the table's sorted shard intervals and whether the table is hash
+ * distributed. Shards with the same index in tables of the same colocation
+ * group are always placed together. Returns false if the shard is unknown.
+ */
+bool
+LookupShardPosition(uint64 shardId, Oid *relationId, uint32 *colocationId,
+					int *shardIndex, bool *isHashDistributed)
+{
+	bool missingOk = true;
+	ShardIdCacheEntry *shardIdEntry = LookupShardIdCacheEntry(shardId, missingOk);
+
+	if (shardIdEntry == NULL)
+	{
+		return false;
+	}
+
+	CitusTableCacheEntry *tableEntry = shardIdEntry->tableEntry;
+
+	*relationId = tableEntry->relationId;
+	*colocationId = tableEntry->colocationId;
+	*shardIndex = shardIdEntry->shardIndex;
+	*isHashDistributed = IsCitusTableTypeCacheEntry(tableEntry, HASH_DISTRIBUTED);
+	return true;
+}
+
+
+/*
  * RelationIdOfShard returns the relationId of the given shardId.
  */
 Oid
