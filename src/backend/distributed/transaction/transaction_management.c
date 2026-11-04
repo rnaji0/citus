@@ -13,6 +13,8 @@
 
 #include "postgres.h"
 
+#include "portability/instr_time.h"
+
 #include "libpq-fe.h"
 #include "miscadmin.h"
 
@@ -54,6 +56,7 @@
 #include "distributed/shard_cleaner.h"
 #include "distributed/shared_connection_stats.h"
 #include "distributed/subplan_execution.h"
+#include "distributed/observer/observer.h"
 #include "distributed/transaction_management.h"
 #include "distributed/version_compat.h"
 #include "distributed/worker_log_messages.h"
@@ -335,8 +338,18 @@ CoordinatedTransactionCallback(XactEvent event, void *arg)
 			if (CurrentCoordinatedTransactionState == COORD_TRANS_PREPARED &&
 				!IsMainDBCommand)
 			{
+				instr_time commitStart;
+				instr_time commitEnd;
+
+				INSTR_TIME_SET_CURRENT(commitStart);
+
 				/* handles both already prepared and open transactions */
 				CoordinatedRemoteTransactionsCommit();
+
+				INSTR_TIME_SET_CURRENT(commitEnd);
+				INSTR_TIME_SUBTRACT(commitEnd, commitStart);
+				ObserverCommitPhase(OBS_COMMIT_PHASE_COMMIT,
+									INSTR_TIME_GET_MICROSEC(commitEnd), true);
 			}
 
 			/*
@@ -394,6 +407,8 @@ CoordinatedTransactionCallback(XactEvent event, void *arg)
 				Assert(GetCitusCreationLevel() == 1);
 				SetCreateCitusTransactionLevel(0);
 			}
+
+			ObserverDistributedTransactionEnd(true);
 			break;
 		}
 
@@ -489,6 +504,9 @@ CoordinatedTransactionCallback(XactEvent event, void *arg)
 			UnSetDistributedTransactionId();
 
 			PlacementMovedUsingLogicalReplicationInTX = false;
+
+			ObserverDistributedTransactionEnd(false);
+			ObserverActionAbort();
 			break;
 		}
 
@@ -558,7 +576,16 @@ CoordinatedTransactionCallback(XactEvent event, void *arg)
 
 			if (ShouldCoordinatedTransactionUse2PC)
 			{
+				instr_time prepareStart;
+				instr_time prepareEnd;
+
+				INSTR_TIME_SET_CURRENT(prepareStart);
 				CoordinatedRemoteTransactionsPrepare();
+				INSTR_TIME_SET_CURRENT(prepareEnd);
+				INSTR_TIME_SUBTRACT(prepareEnd, prepareStart);
+				ObserverCommitPhase(OBS_COMMIT_PHASE_PREPARE,
+									INSTR_TIME_GET_MICROSEC(prepareEnd), true);
+
 				CurrentCoordinatedTransactionState = COORD_TRANS_PREPARED;
 
 				/*
@@ -578,7 +605,15 @@ CoordinatedTransactionCallback(XactEvent event, void *arg)
 				 */
 				if (IsMainDB)
 				{
+					instr_time commitStart;
+					instr_time commitEnd;
+
+					INSTR_TIME_SET_CURRENT(commitStart);
 					CoordinatedRemoteTransactionsCommit();
+					INSTR_TIME_SET_CURRENT(commitEnd);
+					INSTR_TIME_SUBTRACT(commitEnd, commitStart);
+					ObserverCommitPhase(OBS_COMMIT_PHASE_COMMIT,
+										INSTR_TIME_GET_MICROSEC(commitEnd), false);
 				}
 				CurrentCoordinatedTransactionState = COORD_TRANS_COMMITTED;
 			}
