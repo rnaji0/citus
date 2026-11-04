@@ -86,6 +86,7 @@
 #include "distributed/multi_physical_planner.h"
 #include "distributed/multi_router_planner.h"
 #include "distributed/multi_server_executor.h"
+#include "distributed/observer/observer.h"
 #include "distributed/pg_dist_partition.h"
 #include "distributed/placement_connection.h"
 #include "distributed/priority.h"
@@ -583,6 +584,9 @@ _PG_init(void)
 	PrevProcessUtility = (ProcessUtility_hook != NULL) ?
 						 ProcessUtility_hook : standard_ProcessUtility;
 	ProcessUtility_hook = citus_ProcessUtility;
+
+	/* engine telemetry wraps the hooks installed above */
+	InitializeObserver();
 
 	/*
 	 * Acquire symbols for columnar functions that citus calls.
