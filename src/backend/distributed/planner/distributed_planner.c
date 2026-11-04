@@ -64,6 +64,7 @@
 #include "distributed/multi_partitioning_utils.h"
 #include "distributed/multi_physical_planner.h"
 #include "distributed/multi_router_planner.h"
+#include "distributed/observer/observer.h"
 #include "distributed/query_pushdown_planning.h"
 #include "distributed/query_utils.h"
 #include "distributed/recursive_planning.h"
@@ -786,6 +787,9 @@ CreateDistributedPlannedStmt(DistributedPlanningContext *planContext)
 
 	PlannedStmt *resultPlan = NULL;
 
+	/* record column usage before recursive planning rewrites the query */
+	ObserverAnalyzeQueryColumns(planContext->originalQuery);
+
 	if (QueryTreeContainsInlinableCTE(planContext->originalQuery))
 	{
 		/*
@@ -864,6 +868,8 @@ CreateDistributedPlannedStmt(DistributedPlanningContext *planContext)
 
 	/* remember the plan's identifier for identifying subplans */
 	distributedPlan->planId = planId;
+
+	ObserverRecordPlan(planContext->originalQuery, distributedPlan);
 
 	/* create final plan by combining local plan with distributed plan */
 	resultPlan = FinalizePlan(planContext->plan, distributedPlan);
@@ -1116,6 +1122,10 @@ CreateDistributedPlan(uint64 planId, bool allowRecursivePlanning, Query *origina
 	/* the functions above always return a plan, possibly with an error */
 	Assert(distributedPlan);
 
+	/* why the router planner gave up, for the plan we end up with */
+	const char *routerFailure = distributedPlan->planningError != NULL ?
+								distributedPlan->planningError->message : NULL;
+
 	if (distributedPlan->planningError == NULL)
 	{
 		return distributedPlan;
@@ -1238,6 +1248,7 @@ CreateDistributedPlan(uint64 planId, bool allowRecursivePlanning, Query *origina
 		Assert(distributedPlan != NULL);
 		distributedPlan->subPlanList = subPlanList;
 
+		ObserverAttachRouterFailure(distributedPlan, routerFailure);
 		return distributedPlan;
 	}
 
@@ -1281,6 +1292,7 @@ CreateDistributedPlan(uint64 planId, bool allowRecursivePlanning, Query *origina
 	/* distributed plan currently should always succeed or error out */
 	Assert(distributedPlan && distributedPlan->planningError == NULL);
 
+	ObserverAttachRouterFailure(distributedPlan, routerFailure);
 	return distributedPlan;
 }
 
