@@ -1,0 +1,8 @@
+# citus_observer: engine-level telemetry for Citus clusters
+comment = 'Per-shard, per-query, per-transaction and per-key telemetry collected inside Citus'
+default_version = '1.0'
+module_pathname = '$libdir/citus'
+relocatable = false
+schema = citus_observer
+requires = 'citus'
+superuser = true

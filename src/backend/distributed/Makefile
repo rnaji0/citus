@@ -18,7 +18,7 @@ generated_downgrade_sql_files += $(patsubst %,$(citus_abs_srcdir)/build/sql/%,$(
 DATA_built = $(generated_sql_files)
 
 # directories with source files
-SUBDIRS = . commands connection ddl deparser executor metadata operations planner progress relay safeclib shardsplit stats test transaction utils worker clock
+SUBDIRS = . commands connection ddl deparser executor metadata observer operations planner progress relay safeclib shardsplit stats test transaction utils worker clock
 # enterprise modules
 SUBDIRS += replication
 
@@ -32,12 +32,15 @@ OBJS += \
 	$(patsubst $(citus_abs_srcdir)/%.c,%.o,$(foreach dir,$(SUBDIRS), $(sort $(wildcard $(citus_abs_srcdir)/$(dir)/*.c))))
 
 # be explicit about the default target
-.PHONY: cdc
+.PHONY: cdc observer-decoder
 
-all: cdc
+all: cdc observer-decoder
 
 cdc:
 	$(MAKE) -C cdc all
+
+observer-decoder:
+	$(MAKE) -C observer/decoder all
 
 NO_PGXS = 1
 
@@ -86,8 +89,9 @@ endif
 
 
 .PHONY: clean-full install install-downgrades install-all install-cdc clean-cdc
+.PHONY: install-observer clean-observer
 
-clean: clean-cdc
+clean: clean-cdc clean-observer
 
 clean-cdc:
 	$(MAKE) -C cdc clean
@@ -96,10 +100,20 @@ cleanup-before-install:
 	rm -f $(DESTDIR)$(datadir)/$(datamoduledir)/citus.control
 	rm -f $(DESTDIR)$(datadir)/$(datamoduledir)/citus--*
 
-install: cleanup-before-install install-cdc
+install: cleanup-before-install install-cdc install-observer
 
 install-cdc:
 	$(MAKE) -C cdc install
+
+# citus_observer is a separate extension whose functions live in citus.so
+install-observer:
+	$(MAKE) -C observer/decoder install
+	$(INSTALL_DATA) $(citus_abs_srcdir)/observer/sql/citus_observer.control \
+		$(citus_abs_srcdir)/observer/sql/citus_observer--1.0.sql \
+		'$(DESTDIR)$(datadir)/$(datamoduledir)/'
+
+clean-observer:
+	$(MAKE) -C observer/decoder clean
 
 # install and install-downgrades should be run sequentially
 install-all: install
