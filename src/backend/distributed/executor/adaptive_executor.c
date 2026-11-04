@@ -163,6 +163,7 @@
 #include "distributed/multi_partitioning_utils.h"
 #include "distributed/multi_physical_planner.h"
 #include "distributed/multi_server_executor.h"
+#include "distributed/observer/observer.h"
 #include "distributed/param_utils.h"
 #include "distributed/placement_access.h"
 #include "distributed/placement_connection.h"
@@ -628,6 +629,10 @@ typedef struct TaskPlacementExecution
 	/* execution time statistics for this placement execution */
 	instr_time startTime;
 	instr_time endTime;
+
+	/* rows and result bytes received from this placement */
+	uint64 receivedRows;
+	uint64 receivedBytes;
 } TaskPlacementExecution;
 
 
@@ -786,9 +791,14 @@ AdaptiveExecutor(CitusScanState *scanState)
 
 	Job *job = distributedPlan->workerJob;
 	List *taskList = job->taskList;
+	instr_time executionStart;
 
 	/* we should only call this once before the scan finished */
 	Assert(!scanState->finishedRemoteScan);
+
+	INSTR_TIME_SET_CURRENT(executionStart);
+	ObserverBeginDistributedExecution(job->jobQuery->commandType, list_length(taskList),
+									  job->partitionKeyValue);
 
 	MemoryContext localContext = AllocSetContextCreate(CurrentMemoryContext,
 													   "AdaptiveExecutor",
@@ -896,6 +906,13 @@ AdaptiveExecutor(CitusScanState *scanState)
 	}
 
 	FinishDistributedExecution(execution);
+
+	instr_time executionTime;
+	INSTR_TIME_SET_CURRENT(executionTime);
+	INSTR_TIME_SUBTRACT(executionTime, executionStart);
+	ObserverEndDistributedExecution(distributedPlan, taskList,
+									executorState->es_plannedstmt->queryId,
+									INSTR_TIME_GET_MILLISEC(executionTime));
 
 	if (SortReturning && distributedPlan->expectResults && commandType != CMD_SELECT)
 	{
@@ -4011,6 +4028,7 @@ ReceiveResults(WorkerSession *session, bool storeRows)
 				currentAffectedTupleCount = pg_strtoint64(currentAffectedTupleString);
 				Assert(currentAffectedTupleCount >= 0);
 				execution->rowsProcessed += currentAffectedTupleCount;
+				placementExecution->receivedRows += currentAffectedTupleCount;
 			}
 
 			PQclear(result);
@@ -4034,6 +4052,16 @@ ReceiveResults(WorkerSession *session, bool storeRows)
 		}
 		else if (resultStatus != PGRES_SINGLE_TUPLE)
 		{
+			instr_time now;
+
+			INSTR_TIME_SET_CURRENT(now);
+			ObserverRecordTaskExecution(task, placementExecution->shardPlacement->nodeId,
+										false, false,
+										MicrosecondsBetweenTimestamps(
+											placementExecution->startTime, now),
+										placementExecution->receivedRows,
+										placementExecution->receivedBytes);
+
 			/* query failures are always hard errors */
 			ReportResultError(connection, result, ERROR);
 		}
@@ -4177,6 +4205,8 @@ ReceiveResults(WorkerSession *session, bool storeRows)
 			MemoryContextReset(rowContext);
 
 			execution->rowsProcessed++;
+			placementExecution->receivedRows++;
+			placementExecution->receivedBytes += tupleLibpqSize;
 		}
 
 		PQclear(result);
@@ -4344,6 +4374,12 @@ PlacementExecutionDone(TaskPlacementExecution *placementExecution, bool succeede
 		workerPool->totalTaskExecutionTime += durationMicrosecs;
 		workerPool->totalExecutedTasks += 1;
 
+		ObserverRecordTaskExecution(shardCommandExecution->task,
+									placementExecution->shardPlacement->nodeId,
+									false, true, durationMicrosecs,
+									placementExecution->receivedRows,
+									placementExecution->receivedBytes);
+
 		if (IsLoggableLevel(DEBUG4))
 		{
 			ereport(DEBUG4, (errmsg("task execution (%d) for placement (%ld) on anchor "
@@ -4375,6 +4411,20 @@ PlacementExecutionDone(TaskPlacementExecution *placementExecution, bool succeede
 			 * on this failure.
 			 */
 			failedPlacementExecutionIsOnPendingQueue = true;
+		}
+
+		if (!INSTR_TIME_IS_ZERO(placementExecution->startTime))
+		{
+			instr_time now;
+
+			INSTR_TIME_SET_CURRENT(now);
+			ObserverRecordTaskExecution(shardCommandExecution->task,
+										placementExecution->shardPlacement->nodeId,
+										false, false,
+										MicrosecondsBetweenTimestamps(
+											placementExecution->startTime, now),
+										placementExecution->receivedRows,
+										placementExecution->receivedBytes);
 		}
 
 		placementExecution->executionState = PLACEMENT_EXECUTION_FAILED;

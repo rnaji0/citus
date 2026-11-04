@@ -102,6 +102,7 @@
 #include "distributed/metadata_cache.h"
 #include "distributed/multi_executor.h"
 #include "distributed/multi_server_executor.h"
+#include "distributed/observer/observer.h"
 #include "distributed/query_utils.h"
 #include "distributed/relation_access_tracking.h"
 #include "distributed/remote_commands.h" /* to access LogRemoteCommands */
@@ -752,6 +753,11 @@ LocallyExecuteTaskPlan(PlannedStmt *taskPlan, char *queryString,
 
 	AttributeTask(partitionKeyValueString, task->colocationId, taskPlan->commandType);
 
+	instr_time taskStart;
+	instr_time taskTime;
+
+	INSTR_TIME_SET_CURRENT(taskStart);
+
 	PG_TRY();
 	{
 		processedRows = ExecuteTaskPlan(taskPlan, queryString, tupleDest, task,
@@ -761,11 +767,22 @@ LocallyExecuteTaskPlan(PlannedStmt *taskPlan, char *queryString,
 	{
 		LocalExecutorShardId = prevLocalExecutorShardId;
 
+		INSTR_TIME_SET_CURRENT(taskTime);
+		INSTR_TIME_SUBTRACT(taskTime, taskStart);
+		ObserverRecordTaskExecution(task, GetLocalNodeId(), true, false,
+									INSTR_TIME_GET_MICROSEC(taskTime), 0, 0);
+
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
 
 	LocalExecutorShardId = prevLocalExecutorShardId;
+
+	INSTR_TIME_SET_CURRENT(taskTime);
+	INSTR_TIME_SUBTRACT(taskTime, taskStart);
+	ObserverRecordTaskExecution(task, GetLocalNodeId(), true, true,
+								INSTR_TIME_GET_MICROSEC(taskTime), processedRows,
+								task->totalReceivedTupleData);
 
 	return processedRows;
 }
