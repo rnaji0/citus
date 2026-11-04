@@ -32,6 +32,7 @@
 #include "distributed/metadata_sync.h"
 #include "distributed/multi_partitioning_utils.h"
 #include "distributed/multi_physical_planner.h"
+#include "distributed/observer/observer.h"
 #include "distributed/pg_dist_shard.h"
 #include "distributed/reference_table_utils.h"
 #include "distributed/remote_commands.h"
@@ -506,6 +507,10 @@ SplitShard(SplitMode splitMode,
 	/* Start operation to prepare for generating cleanup records */
 	RegisterOperationNeedingCleanup();
 
+	ObserverSplitBegin(splitOperation == ISOLATE_TENANT_TO_NEW_SHARD ? "isolate" : "split",
+					   sourceColocatedShardIntervalList,
+					   splitMode == BLOCKING_SPLIT ? "block_writes" : "logical");
+
 	if (splitMode == BLOCKING_SPLIT)
 	{
 		ereport(LOG, (errmsg("performing blocking %s ", operationName)));
@@ -538,6 +543,8 @@ SplitShard(SplitMode splitMode,
 	 * Drop temporary objects that were marked as CLEANUP_ALWAYS.
 	 */
 	FinalizeOperationNeedingCleanupOnSuccess(operationName);
+
+	ObserverActionEnd(true);
 }
 
 

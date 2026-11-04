@@ -48,6 +48,7 @@
 #include "distributed/multi_logical_replication.h"
 #include "distributed/multi_partitioning_utils.h"
 #include "distributed/multi_progress.h"
+#include "distributed/observer/observer.h"
 #include "distributed/reference_table_utils.h"
 #include "distributed/remote_commands.h"
 #include "distributed/resource_lock.h"
@@ -629,6 +630,10 @@ TransferShards(int64 shardId, char *sourceNodeName,
 										  sourceNodeName, sourceNodePort,
 										  targetNodeName, targetNodePort,
 										  transferType);
+
+	ObserverShardTransferBegin(transferType == SHARD_TRANSFER_MOVE ? "move" : "copy",
+							   colocatedShardList, sourceNodeName, sourceNodePort,
+							   targetNodeName, targetNodePort);
 
 	UpdatePlacementUpdateStatusForShardIntervalList(
 		colocatedShardList,
@@ -2542,6 +2547,8 @@ UpdatePlacementUpdateStatusForShardIntervalList(List *shardIntervalList,
 {
 	List *segmentList = NIL;
 	List *rebalanceMonitorList = NULL;
+
+	ObserverShardTransferStatus(shardIntervalList, status);
 
 	if (!HasProgressMonitor())
 	{
